@@ -21,13 +21,17 @@ func TestConcurrentCompactionAndWatch(t *testing.T) {
 
 	// Simulate concurrent compaction and watch creation
 	ch := make(chan WatchResponse, 1)
+	compactDone := make(chan struct{})
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		st.compact(5)
+		store.compact(5)
+		close(compactDone)
 	}()
 
 	_, err := store.watch([]byte("foo"), nil, 5, 1, ch)
 	if err == nil {
+		// Wait for compaction to complete
+		<-compactDone
 		// If watch creation succeeded, syncWatchers should catch it if compaction has progressed
 		store.syncWatchers()
 		select {

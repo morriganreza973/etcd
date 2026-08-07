@@ -105,3 +105,18 @@ func (s *watchableStore) syncWatchers() int {
 
 	return len(s.unsynced.watchers)
 }
+
+func (s *watchableStore) compact(rev int64) {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	s.store.compact(rev)
+	for w := range s.unsynced.watchers {
+		if w.minRev <= rev {
+			select {
+			case w.ch <- WatchResponse{WatchID: w.id, CompactRevision: rev}:
+			default:
+			}
+			delete(s.unsynced.watchers, w)
+		}
+	}
+}
