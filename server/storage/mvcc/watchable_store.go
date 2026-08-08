@@ -55,6 +55,17 @@ func (s *watchableStore) watch(key, end []byte, startRev int64, id WatchID, ch c
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 
+	s.store.Mu.Lock()
+	defer s.store.Mu.Unlock()
+
+	if s.store.onCompact == nil {
+		s.store.onCompact = s.cancelCompactedWatchers
+	}
+
+	if startRev != 0 && startRev <= s.store.compactMainRev {
+		return nil, ErrCompacted
+	}
+
 	wa := &watcher{
 		key:    key,
 		end:    end,
@@ -62,15 +73,6 @@ func (s *watchableStore) watch(key, end []byte, startRev int64, id WatchID, ch c
 		id:     id,
 		ch:     ch,
 		fcs:    fcs,
-	}
-
-	s.store.Mu.Lock()
-	defer s.store.Mu.Unlock()
-	if s.store.onCompact == nil {
-		s.store.onCompact = s.cancelCompactedWatchers
-	}
-	if startRev != 0 && startRev <= s.store.compactMainRev {
-		return nil, ErrCompacted
 	}
 
 	if startRev == 0 || startRev > s.store.currentRev {
@@ -85,9 +87,6 @@ func (s *watchableStore) watch(key, end []byte, startRev int64, id WatchID, ch c
 func (s *watchableStore) cancelCompactedWatchers(rev int64) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
-
-	s.store.Mu.Lock()
-	defer s.store.Mu.Unlock()
 
 	for w := range s.unsynced.watchers {
 		if w.minRev != 0 && w.minRev <= rev {

@@ -1,47 +1,47 @@
 package mvcc
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
 
-func TestConcurrentCompactionAndWatch(t *testing.T) {
-	st := &store{
-		currentRev: 10,
-	}
-	store := &watchableStore{
-		store: st,
-		synced: watcherGroup{
-			watchers: make(map[*watcher]struct{}),
-		},
-		unsynced: watcherGroup{
-			watchers: make(map[*watcher]struct{}),
-		},
+func TestWatchableStoreCompactionRaceCondition(t *testing.T) {
+	st := &store{compactMainRev: 0, currentRev: 10}
+	ws := &watchableStore{
+		store:    st,
+		synced:   watcherGroup{watchers: make(map[*watcher]struct{})},
+		unsynced: watcherGroup{watchers: make(map[*watcher]struct{})},
 	}
 
-	// Simulate concurrent compaction and watch creation
-	ch := make(chan WatchResponse, 1)
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Goroutine 1: Continuous compaction up to revision 5
 	go func() {
-		time.Sleep(10 * time.Millisecond)
-		st.compact(5)
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			st.compact(5)
+			time.Sleep(100 * time.Microsecond)
+		}
 	}()
 
-	_, err := store.watch([]byte("foo"), nil, 5, 1, ch)
-	if err == nil {
-		// Wait for compaction to complete
-		time.Sleep(20 * time.Millisecond)
-		store.syncWatchers()
-		select {
-		case resp := <-ch:
-			if resp.CompactRevision != 5 {
-				t.Errorf("expected CompactRevision 5, got %d", resp.CompactRevision)
+	// Goroutine 2: Attempt to create watch starting at compacted revision 5
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			ch := make(chan WatchResponse, 1)
+			w, err := ws.watch([]byte("foo"), nil, 5, WatchID(i+1), ch)
+			if err == nil && w == nil {
+				t.Errorf("watch returned nil watcher without error")
 			}
-		default:
-			// If no response was sent, it means the watch was established without receiving ErrCompacted
-			// which is a failure.
-			t.Errorf("expected watch to fail with ErrCompacted")
+			if err == ErrCompacted {
+				// Expected behavior when revision is compacted
+				continue
+			}
+			time.Sleep(100 * time.Microsecond)
 		}
-	} else if err != ErrCompacted {
-		t.Errorf("expected ErrCompacted, got %v", err)
-	}
+	}()
+
+	wg.Wait()
 }

@@ -11,10 +11,9 @@ type store struct {
 
 func (s *store) compact(rev int64) {
 	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	s.compactMainRev = rev
-	onCompact := s.onCompact
-	s.Mu.Unlock()
-	if onCompact != nil {
-		onCompact(rev)
+	if s.onCompact != nil {
+		s.onCompact(rev)
 	}
 }
